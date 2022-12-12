@@ -1,8 +1,10 @@
 use std::collections::HashMap;
 
+use super::HTTPMethod;
+
 #[derive(Debug)]
 pub struct HTTPRequest {
-    method: String,
+    method: HTTPMethod,
     version: String,
     uri: String,
     headers: HashMap<String, String>,
@@ -22,7 +24,7 @@ impl HTTPRequest {
         let mut meta = meta.split_whitespace();
 
         let method = match meta.next() {
-            Some(method) => method.to_string(),
+            Some(method) => method.into(),
             None => return Err(String::from("Invalid formatting")),
         };
         let uri = match meta.next() {
@@ -30,7 +32,17 @@ impl HTTPRequest {
             None => return Err(String::from("Invalid formatting")),
         };
         let version = match meta.next() {
-            Some(version) => version.to_string(),
+            Some(version) => {
+                if !version.starts_with("HTTP") {
+                    return Err(String::from("Invalid request type"));
+                }
+
+                let mut split = version.split("/");
+                match split.nth(1) {
+                    Some(version) => version.to_string(),
+                    None => return Err(String::from("Invalid formatting")),
+                }
+            }
             None => return Err(String::from("Invalid formatting")),
         };
 
@@ -51,14 +63,14 @@ impl HTTPRequest {
                 None => return Err(String::from("Invalid formatting")),
             };
 
-            let value = split.fold(String::new(), |mut acc, v| {
-                acc.push_str(v);
-                acc
+            let mut value = split.fold(String::new(), |acc, v| {
+                acc + v + ":"
             });
-
+            
             if value.is_empty() {
-                return Err(String::from("Invalid formatting"))
+                return Err(String::from("Invalid formatting"));
             }
+            value.pop();
 
             headers.insert(key, value);
         }
@@ -100,7 +112,7 @@ impl HTTPRequest {
         &self.version
     }
 
-    pub fn get_method(&self) -> &str {
+    pub fn get_method(&self) -> &HTTPMethod {
         &self.method
     }
 
