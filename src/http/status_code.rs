@@ -4,7 +4,7 @@ pub enum HTTPStatusCode {
     SwitchingProtocols = 101,
     Processing = 102,
     EarlyHints = 103,
-    Ok = 200,
+    OK = 200,
     Created = 201,
     Accepted = 202,
     NonAuthoritativeInformation = 203,
@@ -80,7 +80,7 @@ impl From<HTTPStatusCode> for String {
             HTTPStatusCode::SwitchingProtocols => String::from("Switching Protocols"),
             HTTPStatusCode::Processing => String::from("Processing"),
             HTTPStatusCode::EarlyHints => String::from("Early Hints"),
-            HTTPStatusCode::Ok => String::from("OK"),
+            HTTPStatusCode::OK => String::from("OK"),
             HTTPStatusCode::Created => String::from("Created"),
             HTTPStatusCode::Accepted => String::from("Accepted"),
             HTTPStatusCode::NonAuthoritativeInformation => {

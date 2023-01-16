@@ -4,30 +4,21 @@ use carola::http::{HTTPResponse, HTTPStatusCode};
 
 #[test]
 fn construct_response() {
-    let mut headers = HashMap::new();
-    headers.insert("Content-Type".to_string(), "text/html".to_string());
-    headers.insert("Content-Length".to_string(), "88".to_string());
-
+    let headers = HashMap::new();
     let body = "<html><body><h1>Hello, World!</h1></body></html>".to_string();
 
-    let response = HTTPResponse::new("1.1", HTTPStatusCode::Ok, headers, Some(body));
+    let response = HTTPResponse::new("1.1", HTTPStatusCode::OK, headers, Some(body.clone()));
     let constructed = response.construct();
 
-    assert!(
-        constructed
-            == String::from("\
-                HTTP/1.1 200 OK\r\n\
-                Content-Type:text/html\r\n\
-                Content-Length:88\r\n\
-                \r\n\
-                <html><body><h1>Hello, World!</h1></body></html>\r\n\
-            ") || constructed
-            == String::from("\
-                HTTP/1.1 200 OK\r\n\
-                Content-Length:88\r\n\
-                Content-Type:text/html\r\n\
-                \r\n\
-                <html><body><h1>Hello, World!</h1></body></html>\r\n\
-            ")
+    assert_eq!(
+        constructed,
+        format!(
+            "HTTP/1.1 200 OK\r\n\
+            Content-Length:{}\r\n\
+            \r\n\
+            <html><body><h1>Hello, World!</h1></body></html>\r\n\
+            \r\n",
+            body.len()
+        )
     )
 }
