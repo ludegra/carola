@@ -6,11 +6,12 @@ use std::{
 
 /// # ThreadPool
 ///
-/// A struct used for defining a limited number of threads available for use
+/// A struct used for defining a limited number of threads available for use.
+/// This is mainly used for allowing multiple requests to be handled at once, but with a limited suceptibility of DOS attacks
 pub struct ThreadPool {
-    thread_limit: usize,
+    _thread_limit: usize,
     workers: Vec<Worker>,
-    sender: sync::mpsc::Sender<Job>,
+    sender: Option<sync::mpsc::Sender<Job>>,
 }
 
 impl ThreadPool {
@@ -43,21 +44,33 @@ impl ThreadPool {
             workers.push(Worker::spawn(i, Arc::clone(&reciever)).unwrap());
         }
         Self {
-            thread_limit,
+            _thread_limit: thread_limit,
             workers,
-            sender,
+            sender: Some(sender),
         }
     }
     pub fn execute<F: FnOnce() + Send + 'static>(&self, function: F) {
-        self.sender.send(Box::new(function)).unwrap();
+        self.sender.as_ref().unwrap().send(Box::new(function)).unwrap();
+    }
+}
+
+impl Drop for ThreadPool {
+    fn drop(&mut self) {
+        std::mem::drop(self.sender.take().unwrap());
+
+        for worker in &mut self.workers {
+            if let Some(thread) = worker.thread.take() {
+                thread.join().unwrap();
+            }
+        }
     }
 }
 
 type Job = Box<dyn FnOnce() + Send + 'static>;
 
 struct Worker {
-    id: usize,
-    thread: thread::JoinHandle<()>,
+    _id: usize,
+    thread: Option<thread::JoinHandle<()>>,
 }
 
 impl Worker {
@@ -67,9 +80,21 @@ impl Worker {
     ) -> Result<Self, io::Error> {
         let builder = thread::Builder::new();
         let thread = builder.spawn(move || loop {
-            let job = reciever.lock().unwrap().recv().unwrap();
-            job();
+            let message = reciever.lock().unwrap().recv();
+
+            match message {
+                Ok(job) => {
+                    job();
+                }
+                Err(_) => {
+                    // Sender has been dropped, indicating that the thread pool is shutting down
+                    break;
+                }
+            }
         })?;
-        Ok(Self { id, thread })
+
+        let thread = Some(thread);
+        
+        Ok(Self { _id: id, thread })
     }
 }

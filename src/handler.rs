@@ -1,9 +1,9 @@
 use std::{
     io::{BufRead, BufReader, Write},
-    net::{TcpListener, TcpStream}, collections::HashMap, path::PathBuf, error::Error, fmt::Debug, fs,
+    net::{TcpListener, TcpStream}, collections::HashMap, path::PathBuf, error::Error, fmt::Debug, fs, sync::{Arc, Mutex},
 };
 
-use crate::{http::{self, HTTPResponse, HTTPStatusCode, HTTPMethod, HTTPRequest}, thread_pool::{self, ThreadPool}};
+use crate::{http::{self, HTTPResponse, HTTPStatusCode, HTTPMethod, HTTPRequest}, thread_pool::{self, ThreadPool}, file::get_supported_filetypes};
 
 use self::listener::RequestListener;
 
@@ -27,13 +27,13 @@ mod listener;
 /// });
 /// handler.listen(8080).unwrap();
 /// ```
-pub struct RequestHandler<'a> {
-    listeners: HashMap<(String, HTTPMethod), RequestListener<'a>>,
+pub struct RequestHandler {
+    listeners: HashMap<(String, HTTPMethod), RequestListener<'static>>,
     public_folder: Option<PathBuf>,
-    not_found_callback: Box<dyn FnMut(HTTPRequest) -> HTTPResponse + Send + 'a>
+    not_found_callback: Box<dyn FnMut(HTTPRequest) -> HTTPResponse + Send + 'static>
 }
 
-impl<'a> RequestHandler<'a> {
+impl RequestHandler {
     /// # RequestHandler::new
     /// 
     /// Creates a new instance of a request handler with default configuration
@@ -76,7 +76,7 @@ impl<'a> RequestHandler<'a> {
     ///    HTTPResponse::new("1.1", HTTPStatusCode::OK, HashMap::new(), Some(String::from("Hello World!")))
     /// });
     /// ```
-    pub fn set_listener<C: 'a + Send + FnMut(HTTPRequest) -> HTTPResponse>(&mut self, method: &str, path: &str, callback: C) {
+    pub fn set_listener<C: 'static + Send + FnMut(HTTPRequest) -> HTTPResponse>(&mut self, method: &str, path: &str, callback: C) {
         self.listeners.insert(
             (path.to_owned(), HTTPMethod::from(method)),
             RequestListener::new(
@@ -128,7 +128,7 @@ impl<'a> RequestHandler<'a> {
     ///    HTTPResponse::new("1.1", HTTPStatusCode::NOT_FOUND, HashMap::new(), Some(String::from("404 Not Found!")))
     /// });
     /// ```
-    pub fn set_not_found_callback<C: 'a + Send + FnMut(HTTPRequest) -> HTTPResponse>(&mut self, callback: C) {
+    pub fn set_not_found_callback<C: 'static + Send + FnMut(HTTPRequest) -> HTTPResponse>(&mut self, callback: C) {
         self.not_found_callback = Box::new(callback);
     }
 
@@ -148,14 +148,21 @@ impl<'a> RequestHandler<'a> {
     /// let mut handler = RequestHandler::new();
     /// // -- Configure handler --
     /// handler.listen(8080).unwrap();
-    pub fn listen(&mut self, port: usize) -> Result<(), Box<dyn Error>> {
+    /// ```
+    pub fn listen(mut self, port: usize) -> Result<(), Box<dyn Error>> {
         println!("{:?}", self);
         let listener = TcpListener::bind(&format!("127.0.0.1:{}", port))?;
         let thread_pool = ThreadPool::new(16);
 
+        let arc = Arc::new(Mutex::new(self));
+
         for stream in listener.incoming() {
-            let stream = stream.unwrap();
-            self.handle_request(stream)
+            let arc = arc.clone();
+            thread_pool.execute(move || {
+                let mut handler = arc.lock().unwrap();
+                let stream = stream.unwrap();
+                handler.handle_request(stream);
+            });
         }
 
         unreachable!()
@@ -179,19 +186,36 @@ impl<'a> RequestHandler<'a> {
     fn match_request(&mut self, request: HTTPRequest) -> HTTPResponse {
         let path = request.get_uri().to_owned();
         let method = request.get_method().to_owned();
+
+        // If there is a listener for this path, call it
         if let Some(listener) = self.listeners.get_mut(&(path, method)) {
             (listener.callback)(request)
         }
+        // If there is a public folder and the file exists, serve it
         else if let Some(public_folder) = &self.public_folder {
             let path = public_folder.join(request.get_uri());
             if path.exists() {
+                let mut headers = HashMap::new();
+
+                // Define content type based on file extension
+                let content_type = match path.extension() {
+                    None => "text/plain",
+                    Some(ext) => get_supported_filetypes().get(ext).unwrap_or(&"text/plain")
+                };
+
+                headers.insert("Content-Type".to_string(), content_type.to_string());
+
+                // Read file contents
                 let body = fs::read_to_string(path).unwrap();
-                HTTPResponse::new("1.1", HTTPStatusCode::OK, HashMap::new(), Some(body))
+
+                // Construct response
+                HTTPResponse::new("1.1", HTTPStatusCode::OK, headers, Some(body))
             }
             else {
                 (self.not_found_callback)(request)
             }
         }
+        // If there is no listener and no public folder, return 404
         else {
             (self.not_found_callback)(request)
         }
@@ -203,7 +227,7 @@ impl<'a> RequestHandler<'a> {
     }
 }
 
-impl Debug for RequestHandler<'_> {
+impl Debug for RequestHandler {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("RequestHandler")
             .field("listeners", &self.listeners)
